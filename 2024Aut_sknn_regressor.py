@@ -8,41 +8,97 @@ import rfit
 import matplotlib.pyplot as plt
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import KNeighborsRegressor
-# from sklearn.linear_model import LogisticRegression
-# from sklearn.svm import SVC, LinearSVC
-# from sklearn.tree import DecisionTreeClassifier
-#
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC, LinearSVC
+from sklearn.tree import DecisionTreeClassifier
+
 import warnings
 warnings.filterwarnings("ignore")
 print("\nReady to continue.")
 
+#%%[markdown]
+# 1. Data Preprocessing
+
 #%%
-df = pd.read_csv(f'..{os.sep}data{os.sep}HousePricesAdv{os.sep}train.csv', header=0)
+df = pd.read_csv(f'train.csv', header=0)
+
+#%%
+numerical_var = ['LotArea', 'SalePrice','LotFrontage', 
+                 'MasVnrArea', 'BsmtFinSF1', 'BsmtFinSF2',
+                 'BsmtUnfSF', 'TotalBsmtSF', '1stFlrSF', 
+                 '2ndFlrSF', 'LowQualFinSF', 'GrLivArea', 
+                 'BsmtFullBath', 'BsmtHalfBath', 'FullBath', 
+                 'HalfBath', 'BedroomAbvGr', 'KitchenAbvGr',
+                 'TotRmsAbvGrd', 'Fireplaces', 'GarageCars',
+                 'GarageArea', 'WoodDeckSF', 'OpenPorchSF', 
+                 'EnclosedPorch', '3SsnPorch', 'ScreenPorch', 
+                 'PoolArea', 'MiscVal']  
+df[numerical_var] = StandardScaler().fit_transform(df[numerical_var])
+
+#%%
+
+# Ordinal encoding
+ordinal_var = ['OverallQual', 'OverallCond', 'ExterQual', 'ExterCond',
+               'BsmtQual', 'BsmtCond', 'BsmtFinType1', 'BsmtFinType2',
+               'HeatingQC', 'KitchenQual', 'Functional', 'FireplaceQu', 
+               'GarageQual', 'GarageCond', 'GarageCond', 'PoolQC', 'Fence']  
+
+df['OverallQual'] = df['OverallQual'].map({1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:7, 9:8, 10:9}) 
+df['OverallCond'] = df['OverallCond'].map({1:0, 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:7, 9:8, 10:9})
+df['BsmtFinType1'] = df['BsmtFinType1'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
+df['BsmtFinType2'] = df['BsmtFinType2'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
+df['Functional'] = df['Functional'].map({'Sal':0, 'Sev':1, 'Maj2':2, 'Maj1':3,
+                                         'Mod':4, 'Min2':5, 'Min1':6, 'Typ':7})
+df['Fence'] = df['Fence'].map({'NA': 0, 'MnWw': 0, 'GdWo': 1, 'MnPrv': 2, 'GdPrv': 3})
+
+# loop for mapping quality levels
+quality_mapping = {'Po': 0, 'Fa': 1, 'TA': 2, 'Gd': 3, 'Ex': 4}
+for col in ['ExterQual', 'ExterCond', 'HeatingQC', 'KitchenQual']:
+    df[col] = df[col].map(quality_mapping)
+
+# loop for variables with "NA" and quality levels
+na_quality_mapping = {'NA': 0, 'Po': 0, 'Fa': 1, 'TA': 2, 'Gd': 3, 'Ex': 4}
+for col in ['BsmtQual', 'BsmtCond', 'FireplaceQu', 'GarageQual', 'GarageCond', 'PoolQC']:
+    df[col] = df[col].map(na_quality_mapping)
+
+
+
+#%%
+# Drop purely categorical features
+categorical_var = ['MSSubClass', 'MSZoning', 'Street',
+                   'Alley', 'LotShape', 'LandContour', 
+                   'Utilities', 'LotConfig', 'LandSlope',
+                   'Neighborhood', 'Condition1', 'Condition2', 
+                   'BldgType', 'HouseStyle', 'RoofStyle', 'RoofMatl',
+                   'Exterior1st', 'Exterior2nd', 'MasVnrType', 'Foundation',
+                   'Heating', 'CentralAir', 'Electrical', 'GarageType',
+                   'GarageFinish', 'PavedDrive', 'MiscFeature', 'SaleType', 
+                   'MoSold', 'YrSold', 'SaleCondition', 'BsmtExposure']  
+df = df.drop(columns=categorical_var)
+
+#%%
+
+# Separate features and target
+data_x = df.drop(columns=['SalePrice'])
+data_y = df['SalePrice']
+
+print("\nReady to continue.")
+
 
 #%%[markdown]
-# Project tasks and goals:
-# 
-# 1. Use this Housing Price dataset. 
-# - Use SalePrice as target for K-NN regression. 
-# - For features that are *ORDINAL*, recode them as 0,1,2,... 
-# - Drop features that are purely categorical.
 # 2. Modify the sknn class to perform K-NN regression.
-# 3. Modify the sknn class as you see fit to improve the algorithm performance, logic, or presentations.
-# 3. Find optimized scaling factors for the features for the best model score.
-# 4. Modify the sknn class to save some results (such as scores, scaling factors, gradients, etc, at various points, like every 100 epoch).
-# 5. Compare the results of the optimized scaling factors to Feature Importance from other models, such as Tree regressor for example.
-# 
-# Please ask me anything about this project. You can either work individually or team with one other student
-# to complete this project.
-# 
-# You/your team need to create a github repo (private) and add myself (physicsland) as a collaborator. 
-# Please setup an appropriate .gitignore as the first thing when you create a repo. 
-# 
-# 
-
 
 #%%
-print("\nReady to continue.")
+
+#%%[markdown]
+# 3. Modify the sknn class as you see fit to improve the algorithm performance, logic, or presentations.
+# 4. Find optimized scaling factors for the features for the best model score.
+# 5. Modify the sknn class to save some results (such as scores, scaling factors, gradients, etc, at various points, like every 100 epoch).
+# 6. Compare the results of the optimized scaling factors to Feature Importance from other models, such as Tree regressor for example.
+
+
+
 
 #%%
 
@@ -327,7 +383,10 @@ class sknn:
 ###### END class sknn
 
 #%%
-
+# test code
+# diabetes = sknn(data_x=data_x, data_y=data_y)
+housing_price = sknn(data_x=data_x, data_y=data_y, learning_rate_init=0.01)
+housing_price.optimize()
 
 
 #%%
