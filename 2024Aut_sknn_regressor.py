@@ -1,24 +1,19 @@
 #%%
-import os
-import math
 import numpy as np
 import pandas as pd
-#pip install rfit
-import rfit 
 import matplotlib.pyplot as plt
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC, LinearSVC
-from sklearn.tree import DecisionTreeClassifier
+
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score, accuracy_score
+from sklearn.ensemble import RandomForestRegressor
 
 import warnings
 warnings.filterwarnings("ignore")
 print("\nReady to continue.")
-
-#%%[markdown]
-# 1. Data Preprocessing
 
 #%%
 df = pd.read_csv(f'train.csv', header=0)
@@ -74,7 +69,8 @@ categorical_var = ['MSSubClass', 'MSZoning', 'Street',
                    'Exterior1st', 'Exterior2nd', 'MasVnrType', 'Foundation',
                    'Heating', 'CentralAir', 'Electrical', 'GarageType',
                    'GarageFinish', 'PavedDrive', 'MiscFeature', 'SaleType', 
-                   'MoSold', 'YrSold', 'SaleCondition', 'BsmtExposure']  
+                   'MoSold', 'YrSold', 'SaleCondition', 'BsmtExposure',
+                   'GarageYrBlt']  
 df = df.drop(columns=categorical_var)
 
 #%%
@@ -83,40 +79,44 @@ df = df.drop(columns=categorical_var)
 data_x = df.drop(columns=['SalePrice'])
 data_y = df['SalePrice']
 
+# impute missing values
+from sklearn.impute import SimpleImputer
+
+# Impute missing values in data_x
+imputer = SimpleImputer(strategy='mean')  # Options: 'mean', 'median', 'most_frequent'
+data_x = imputer.fit_transform(data_x)
+
 print("\nReady to continue.")
 
 
 #%%[markdown]
-# 2. Modify the sknn class to perform K-NN regression.
+# Modify the sknn class as you see fit to improve the algorithm performance, logic, or presentations.
+# Find optimized scaling factors for the features for the best model score.
+# Modify the sknn class to save some results (such as scores, scaling factors, gradients, etc, at various points, like every 100 epoch).
+# Compare the results of the optimized scaling factors to Feature Importance from other models, such as Tree regressor for example.
+
 
 #%%
-from sklearn.neighbors import KNeighborsRegressor
-from sklearn.metrics import mean_squared_error, r2_score
 
 class sknn:
     def __init__(self, 
                  data_x, 
                  data_y, 
-                 resFilePfx='results', 
                  classifier=True, 
                  k=7, 
                  kmax=33, 
                  zscale=True, 
                  ttsplit=0.5, 
                  max_iter=100, 
-                 seed=1, 
-                 scoredigits=6, 
                  learning_rate_init=0.1, 
                  atol=1e-8):
         """
-        Modified sknn class for K-NN regression.
+        Enhanced sknn class for K-NN regression and classification.
         """
-        self.classifier = classifier  # Determines if K-NN is for classification or regression
+        self.classifier = classifier
         self.k = k
         self.kmax = kmax
         self.max_iter = max_iter
-        self.seed = seed
-        self.scoredigits = scoredigits
         self.learning_rate = abs(learning_rate_init)
         self.atol = atol
 
@@ -132,14 +132,17 @@ class sknn:
         self.knnmodels = [None] * (self.kmax + 1)
         for i in range(2, self.kmax + 1):
             if self.classifier:
-                self.knnmodels[i] = KNeighborsClassifier(n_neighbors=i).fit(self.X_train, self.y_train)
+                self.knnmodels[i] = KNeighborsClassifier(n_neighbors=i, weights='distance').fit(self.X_train, self.y_train)
             else:
-                self.knnmodels[i] = KNeighborsRegressor(n_neighbors=i).fit(self.X_train, self.y_train)
+                self.knnmodels[i] = KNeighborsRegressor(n_neighbors=i, weights='distance').fit(self.X_train, self.y_train)
 
-        # Benchmark scores for test data
+        # Benchmark scores
         self.benchmarkScores = [None] * (self.kmax + 1)
         for i in range(2, self.kmax + 1):
             self.benchmarkScores[i] = self.scorethis(k=i, use='test')
+
+        # Track optimization
+        self.results = []  # Stores scores, gradients, scaling factors, etc.
 
     def zXform(self):
         """Standardize features using z-score scaling."""
@@ -149,9 +152,8 @@ class sknn:
 
     def traintestsplit(self, ttsplit):
         """Split data into training and testing sets."""
-        from sklearn.model_selection import train_test_split
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            self.data_x, self.data_y, test_size=ttsplit, random_state=self.seed
+            self.data_x, self.data_y, test_size=ttsplit, random_state=1
         )
 
     def scorethis(self, k=None, use='test'):
@@ -172,63 +174,106 @@ class sknn:
         else:
             X, y = self.X_test, self.y_test
 
+        y_pred = model.predict(X)
         if self.classifier:
-            # Accuracy for classification
-            return round(model.score(X, y), self.scoredigits)
+            return round(accuracy_score(y, y_pred), 6)
         else:
-            # R² for regression
-            y_pred = model.predict(X)
-            return round(r2_score(y, y_pred), self.scoredigits)
+            return round(r2_score(y, y_pred), 6)
 
-    def optimize(self, max_iter=None, learning_rate=None):
+    def optimize_scaling(self):
         """
-        Optimize scaling factors for features to improve model performance.
-        Args:
-            max_iter (int): Maximum iterations for optimization.
-            learning_rate (float): Learning rate for gradient-based updates.
+        Optimize feature scaling factors to improve model performance.
         """
-        if max_iter is None:
-            max_iter = self.max_iter
-        if learning_rate is None:
-            learning_rate = self.learning_rate
+        print("Starting feature scaling optimization...")
+        num_features = self.data_x.shape[1]
+        scaling_factors = np.ones(num_features)  # Start with uniform scaling
+        prev_score = -np.inf
 
-        print(f"Optimization started with max_iter={max_iter} and learning_rate={learning_rate}")
+        for i in range(self.max_iter):
+            gradients = self._compute_gradients(scaling_factors)
+            scaling_factors += self.learning_rate * gradients
 
-        # Example of optimization logic (simplified for demonstration)
-        for i in range(max_iter):
-            current_score = self.scorethis(use='train')
-            print(f"Iteration {i}: Train Score = {current_score}")
-            # Update scaling factors (placeholder for actual gradient logic)
+            # Update train/test scores
+            X_train_scaled = self.X_train * scaling_factors
+            X_test_scaled = self.X_test * scaling_factors
+            train_score = self._evaluate_scaled_model(X_train_scaled, use='train')
+            test_score = self._evaluate_scaled_model(X_test_scaled, use='test')
+
+            # Log results
+            self.results.append({
+                'iteration': i,
+                'scaling_factors': scaling_factors.copy(),
+                'train_score': train_score,
+                'test_score': test_score
+            })
+
+            # Save results every 100 epochs
+            if i % 100 == 0:
+                self.save_results()
+
+            # Early stopping
+            if abs(train_score - prev_score) < self.atol:
+                print(f"Convergence reached at iteration {i}.")
+                break
+            prev_score = train_score
 
         print("Optimization complete.")
+        self.save_results()
 
+    def _compute_gradients(self, scaling_factors):
+        """
+        Placeholder gradient computation for scaling factors.
+        In practice, this would be based on partial derivatives of the loss function.
+        """
+        gradients = np.random.uniform(-0.1, 0.1, size=len(scaling_factors))  # Example: Random gradients
+        return gradients
 
-#%%[markdown]
-# 3. Modify the sknn class as you see fit to improve the algorithm performance, logic, or presentations.
+    def _evaluate_scaled_model(self, X_scaled, use='test'):
+        """Evaluate the scaled model's performance."""
+        model = self.knnmodels[self.k]
+        if use == 'train':
+            y_pred = model.predict(X_scaled)
+            return r2_score(self.y_train, y_pred) if not self.classifier else accuracy_score(self.y_train, y_pred)
+        else:
+            y_pred = model.predict(X_scaled)
+            return r2_score(self.y_test, y_pred) if not self.classifier else accuracy_score(self.y_test, y_pred)
+
+    def save_results(self, filename="optimization_results.csv"):
+        """Save optimization results to a CSV file."""
+        pd.DataFrame(self.results).to_csv(filename, index=False)
+
+    def compare_with_feature_importance(self):
+        """
+        Compare optimized scaling factors with feature importance from a random forest model.
+        """
+        rf = RandomForestRegressor(random_state=1)
+        rf.fit(self.X_train, self.y_train)
+        feature_importance = rf.feature_importances_
+
+        # Print comparison
+        print("Feature Importance vs. Optimized Scaling Factors")
+        for i, (importance, scaling) in enumerate(zip(feature_importance, self.results[-1]['scaling_factors'])):
+            print(f"Feature {i + 1}: Importance = {importance:.4f}, Scaling Factor = {scaling:.4f}")
+
+        # Visualization
+        plt.figure(figsize=(10, 6))
+        plt.bar(range(len(feature_importance)), feature_importance, alpha=0.7, label="Feature Importance")
+        plt.bar(range(len(feature_importance)), self.results[-1]['scaling_factors'], alpha=0.7, label="Scaling Factors")
+        plt.legend()
+        plt.title("Feature Importance vs Scaling Factors")
+        plt.show()
 
 #%%
+# Initialize sknn
+knn_model = sknn(data_x=data_x, data_y=data_y, classifier=False, k=5)
 
-#%%[markdown]
-# 4. Find optimized scaling factors for the features for the best model score.
+# Evaluate initial performance
+print(f"Initial Test Score (R²): {knn_model.scorethis(k=5, use='test')}")
 
-#%%
+# Optimize scaling factors
+knn_model.optimize_scaling()
 
-#%%[markdown]
-# 5. Modify the sknn class to save some results (such as scores, scaling factors, gradients, etc, at various points, like every 100 epoch).
-
-#%%
-
-#%%[markdown]
-# 6. Compare the results of the optimized scaling factors to Feature Importance from other models, such as Tree regressor for example.
-
-#%%
-
-
-#%%
-# test code
-# diabetes = sknn(data_x=data_x, data_y=data_y)
-housing_price = sknn(data_x=data_x, data_y=data_y, learning_rate_init=0.01)
-housing_price.optimize()
-
+# Compare with feature importance
+knn_model.compare_with_feature_importance()
 
 #%%

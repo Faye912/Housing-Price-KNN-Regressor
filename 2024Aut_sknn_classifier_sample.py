@@ -307,14 +307,10 @@ class sknn:
 ###### END class sknn
 
 #%%
-#%%
 # test code
 # diabetes = sknn(data_x=data_x, data_y=data_y)
 diabetes = sknn(data_x=data_x, data_y=data_y, learning_rate_init=0.01)
 diabetes.optimize()
 
-# print("\nReady to continue.")
-
-
-
+print("\nReady to continue.")
 #%%
