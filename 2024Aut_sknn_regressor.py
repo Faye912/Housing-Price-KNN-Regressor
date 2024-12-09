@@ -5,8 +5,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score
 from sklearn.ensemble import RandomForestRegressor
 import matplotlib.pyplot as plt
 
@@ -16,9 +15,8 @@ print("Ready to continue")
 #%%
 class sknn:
     def __init__(self, 
-                 data_x_train, 
-                 data_y_train, 
-                 data_x_test, 
+                 data_x, 
+                 data_y, 
                  classifier=False, 
                  k=7, 
                  kmax=33, 
@@ -41,9 +39,8 @@ class sknn:
         self.atol = atol
 
         # Preprocess data (only feature data)
-        self.data_x_train = data_x_train.copy()  # Make a copy to avoid modifying the original dataset
-        self.data_y_train = data_y_train.copy()  # Make a copy of the target data
-        self.data_x_test = data_x_test.copy()  # Make a copy of the testing dataset
+        self.data_x = data_x.copy()  # Make a copy to avoid modifying the original dataset
+        self.data_y = data_y.copy()  # Make a copy of the target data
         self.zscale = zscale
         self.preprocess_data()  # Apply preprocessing (scaling, encoding, etc.)
 
@@ -51,21 +48,24 @@ class sknn:
         self.knnmodels = [None] * (self.kmax + 1)
         for i in range(2, self.kmax + 1):
             if self.classifier:
-                self.knnmodels[i] = KNeighborsClassifier(n_neighbors=i).fit(self.data_x_train, self.data_y_train)
+                self.knnmodels[i] = KNeighborsClassifier(n_neighbors=i).fit(self.data_x, self.data_y)
             else:
-                self.knnmodels[i] = KNeighborsRegressor(n_neighbors=i).fit(self.data_x_train, self.data_y_train)
+                self.knnmodels[i] = KNeighborsRegressor(n_neighbors=i).fit(self.data_x, self.data_y)
 
-        # Benchmark scores for test data
+        # Benchmark scores for data
         self.benchmarkScores = [None] * (self.kmax + 1)
         for i in range(2, self.kmax + 1):
-            self.benchmarkScores[i] = self.scorethis(k=i, use='test')
+            self.benchmarkScores[i] = self.scorethis(k=i, use='train')
+
+        # Track results from optimization
+        self.results = []
 
     def preprocess_data(self):
         """
         Preprocess the data by handling missing values, encoding, and scaling.
         This function now only processes feature columns and does not affect the target column (`SalePrice`).
         """
-        self.data_x_train, self.data_y_train = self.data_x_train.align(self.data_y_train, join='inner', axis=0)
+        self.data_x, self.data_y = self.data_x.align(self.data_y, join='inner', axis=0)
 
         # Drop categorical columns without encoding
         categorical_var = ['MSSubClass', 'MSZoning', 'Street', 'Alley', 'LotShape', 'LandContour', 
@@ -76,35 +76,32 @@ class sknn:
                         'SaleCondition', 'BsmtExposure']
         
         # Drop the categorical columns from the feature data
-        self.data_x_train = self.data_x_train.drop(columns=categorical_var, errors='ignore')  # Drop columns if they exist
-        self.data_x_test = self.data_x_test.drop(columns=categorical_var, errors='ignore')  # Same for the test data
+        self.data_x = self.data_x.drop(columns=categorical_var, errors='ignore')  # Drop columns if they exist
 
         # Ordinal encoding for specific columns
-        self.data_x_train['OverallQual'] = self.data_x_train['OverallQual'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
-        self.data_x_train['OverallCond'] = self.data_x_train['OverallCond'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
-        self.data_x_train['BsmtFinType1'] = self.data_x_train['BsmtFinType1'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
-        self.data_x_train['BsmtFinType2'] = self.data_x_train['BsmtFinType2'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
-        self.data_x_train['Functional'] = self.data_x_train['Functional'].map({'Sal': 0, 'Sev': 1, 'Maj2': 2, 'Maj1': 3, 'Mod': 4, 'Min2': 5, 'Min1': 6, 'Typ': 7})
-        self.data_x_train['Fence'] = self.data_x_train['Fence'].map({'NA': 0, 'MnWw': 0, 'GdWo': 1, 'MnPrv': 2, 'GdPrv': 3})
+        self.data_x['OverallQual'] = self.data_x['OverallQual'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
+        self.data_x['OverallCond'] = self.data_x['OverallCond'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
+        self.data_x['BsmtFinType1'] = self.data_x['BsmtFinType1'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
+        self.data_x['BsmtFinType2'] = self.data_x['BsmtFinType2'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
+        self.data_x['Functional'] = self.data_x['Functional'].map({'Sal': 0, 'Sev': 1, 'Maj2': 2, 'Maj1': 3, 'Mod': 4, 'Min2': 5, 'Min1': 6, 'Typ': 7})
+        self.data_x['Fence'] = self.data_x['Fence'].map({'NA': 0, 'MnWw': 0, 'GdWo': 1, 'MnPrv': 2, 'GdPrv': 3})
 
-        self.data_x_test['OverallQual'] = self.data_x_test['OverallQual'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
-        self.data_x_test['OverallCond'] = self.data_x_test['OverallCond'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
-        self.data_x_test['BsmtFinType1'] = self.data_x_test['BsmtFinType1'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
-        self.data_x_test['BsmtFinType2'] = self.data_x_test['BsmtFinType2'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
-        self.data_x_test['Functional'] = self.data_x_test['Functional'].map({'Sal': 0, 'Sev': 1, 'Maj2': 2, 'Maj1': 3, 'Mod': 4, 'Min2': 5, 'Min1': 6, 'Typ': 7})
-        self.data_x_test['Fence'] = self.data_x_test['Fence'].map({'NA': 0, 'MnWw': 0, 'GdWo': 1, 'MnPrv': 2, 'GdPrv': 3})
+        # self.data_x_test['OverallQual'] = self.data_x_test['OverallQual'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
+        # self.data_x_test['OverallCond'] = self.data_x_test['OverallCond'].map({1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8, 10: 9})
+        # self.data_x_test['BsmtFinType1'] = self.data_x_test['BsmtFinType1'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
+        # self.data_x_test['BsmtFinType2'] = self.data_x_test['BsmtFinType2'].map({'NA': 0, 'Unf': 0, 'LwQ': 1, 'Rec': 2, 'BLQ': 3, 'ALQ': 4, 'GLQ': 5})
+        # self.data_x_test['Functional'] = self.data_x_test['Functional'].map({'Sal': 0, 'Sev': 1, 'Maj2': 2, 'Maj1': 3, 'Mod': 4, 'Min2': 5, 'Min1': 6, 'Typ': 7})
+        # self.data_x_test['Fence'] = self.data_x_test['Fence'].map({'NA': 0, 'MnWw': 0, 'GdWo': 1, 'MnPrv': 2, 'GdPrv': 3})
 
         # Quality mappings
         quality_mapping = {'Po': 0, 'Fa': 1, 'TA': 2, 'Gd': 3, 'Ex': 4}
         for col in ['ExterQual', 'ExterCond', 'HeatingQC', 'KitchenQual']:
-            self.data_x_train[col] = self.data_x_train[col].map(quality_mapping)
-            self.data_x_test[col] = self.data_x_test[col].map(quality_mapping)
+            self.data_x[col] = self.data_x[col].map(quality_mapping)
 
         # Handle 'NA' for specific columns
         na_quality_mapping = {'NA': 0, 'Po': 0, 'Fa': 1, 'TA': 2, 'Gd': 3, 'Ex': 4}
         for col in ['BsmtQual', 'BsmtCond', 'FireplaceQu', 'GarageQual', 'GarageCond', 'PoolQC']:
-            self.data_x_train[col] = self.data_x_train[col].map(na_quality_mapping)
-            self.data_x_test[col] = self.data_x_test[col].map(na_quality_mapping)
+            self.data_x[col] = self.data_x[col].map(na_quality_mapping)
 
         # Standardize numerical features
         numerical_var = ['LotArea', 'LotFrontage', 'MasVnrArea', 'BsmtFinSF1', 'BsmtFinSF2', 
@@ -115,30 +112,25 @@ class sknn:
 
         # Impute missing values (using mean for numerical columns)
         imputer = SimpleImputer(strategy='mean')
-        self.data_x_train[numerical_var] = imputer.fit_transform(self.data_x_train[numerical_var])
-        self.data_x_test[numerical_var] = imputer.transform(self.data_x_test[numerical_var])  # Use the same imputer for test data
+        self.data_x[numerical_var] = imputer.fit_transform(self.data_x[numerical_var])
 
         # Scale the features
         scaler = StandardScaler()
-        self.data_x_train[numerical_var] = scaler.fit_transform(self.data_x_train[numerical_var])
-        self.data_x_test[numerical_var] = scaler.transform(self.data_x_test[numerical_var])  # Use the same scaler for test data
+        self.data_x[numerical_var] = scaler.fit_transform(self.data_x[numerical_var])
 
         # Ensure no NaN values remain
-        if self.data_x_train.isna().sum().sum() > 0:
+        if self.data_x.isna().sum().sum() > 0:
             print("Error: Missing values remain in the training dataset after preprocessing.")
-            self.data_x_train = self.data_x_train.fillna(0)  # Handle NaNs if any remain (shouldn't happen if imputed correctly)
-        if self.data_x_test.isna().sum().sum() > 0:
-            print("Error: Missing values remain in the testing dataset after preprocessing.")
-            self.data_x_test = self.data_x_test.fillna(0)  # Handle NaNs if any remain (shouldn't happen if imputed correctly)
-        self.data_y_train = self.data_y_train[self.data_x_train.index]
+            self.data_x = self.data_x.fillna(0)  # Handle NaNs if any remain (shouldn't happen if imputed correctly)
+        self.data_y = self.data_y[self.data_x.index]
 
 
     def scorethis(self, k=None, use='train'):
         """
-        Evaluate model performance using either training or test data.
+        Evaluate model performance using either training data.
         Args:
             k (int): Number of neighbors.
-            use (str): 'train' or 'test' dataset to evaluate.
+            use (str): 'train' dataset to evaluate.
         Returns:
             float: Model performance (R² for regression, accuracy for classification).
         """
@@ -147,26 +139,13 @@ class sknn:
 
         model = self.knnmodels[k]
         if use == 'train':
-            X, y = self.data_x_train, self.data_y_train
-        else:
-            X, y = self.data_x_test, self.data_y_train  # Here we use training target for evaluation since test labels aren't available
-
+            X, y = self.data_x, self.data_y
         y_pred = model.predict(X)
         if self.classifier:
             return round(accuracy_score(y, y_pred), 6)
         else:
             return round(r2_score(y, y_pred), 6)
-
-    def predict(self):
-        """
-        Use the trained model to make predictions on the test set.
-        Returns:
-            y_pred: Predicted target values for the test data.
-        """
-        model = self.knnmodels[self.k]
-        y_pred = model.predict(self.data_x_test)
-        y_pred = y_pred[self.data_x_test.index]
-        return y_pred
+        
 
     def optimize_scaling(self):
         """
@@ -181,18 +160,15 @@ class sknn:
             gradients = self._compute_gradients(scaling_factors)
             scaling_factors += self.learning_rate * gradients
 
-            # Update train/test scores
-            X_train_scaled = self.x_data_train * scaling_factors
-            X_test_scaled = self.x_data_test * scaling_factors
+            # Update train scores
+            X_train_scaled = self.data_x * scaling_factors
             train_score = self._evaluate_scaled_model(X_train_scaled, use='train')
-            test_score = self._evaluate_scaled_model(X_test_scaled, use='test')
 
             # Log results
             self.results.append({
                 'iteration': i,
                 'scaling_factors': scaling_factors.copy(),
                 'train_score': train_score,
-                'test_score': test_score
             })
 
             # Save results every 100 epochs
@@ -216,8 +192,8 @@ class sknn:
         gradients = np.random.uniform(-0.1, 0.1, size=len(scaling_factors))  # Example: Random gradients
         return gradients
 
-    def _evaluate_scaled_model(self, X_scaled, use='test'):
-        """Evaluate the scaled model's performance using training or test data."""
+    def _evaluate_scaled_model(self, X_scaled, use='train'):
+        """Evaluate the scaled model's performance using training data."""
         model = self.knnmodels[self.k]
         
         # Predict values using the trained model
@@ -225,11 +201,8 @@ class sknn:
         
         if use == 'train':
             # Compare predictions with actual training target values
-            return r2_score(self.y_train, y_pred) if not self.classifier else accuracy_score(self.y_train, y_pred)
-        else:
-            # Compare predictions with actual testing target values
-            return r2_score(self.y_test, y_pred) if not self.classifier else accuracy_score(self.y_test, y_pred)
-
+            return r2_score(self.data_y, y_pred) if not self.classifier else accuracy_score(self.y_train, y_pred)
+        
     def save_results(self, filename="optimization_results.csv"):
         """Save optimization results to a CSV file."""
         pd.DataFrame(self.results).to_csv(filename, index=False)
@@ -239,7 +212,7 @@ class sknn:
         Compare optimized scaling factors with feature importance from a RandomForest model.
         """
         rf = RandomForestRegressor(random_state=1)
-        rf.fit(self.data_x_train, self.data_y_train)
+        rf.fit(self.data_x, self.data_y)
         feature_importance = rf.feature_importances_
 
         # Print comparison
@@ -257,19 +230,17 @@ class sknn:
 
 #%%
 train_df = pd.read_csv('train.csv')
-test_df = pd.read_csv('test.csv')
 
 # Separate features (X) and target (y) for training data
-data_x_train = train_df.drop(columns=['SalePrice'])
-data_y_train = train_df['SalePrice']
+data_x = train_df.drop(columns=['SalePrice'])
+data_y = train_df['SalePrice']
 
 
 # Initialize sknn model
-knn_model = sknn(data_x_train=data_x_train, data_y_train=data_y_train, 
-                 data_x_test=test_df, classifier=False, k=5)
+knn_model = sknn(data_x=data_x, data_y=data_y, classifier=False, k=5)
 
 # Train and evaluate the model
-print(f"Test R² Score: {knn_model.scorethis(k=5, use='test')}")
+print(f"R² Score: {knn_model.scorethis(k=5, use='train')}")
 # Optimize scaling factors
 knn_model.optimize_scaling()
 
